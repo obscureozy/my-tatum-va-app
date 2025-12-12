@@ -1,151 +1,95 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import './App.css';
+import AccountList from './components/AccountList';
+import TransactionModal from './components/TransactionModal';
+import { getVirtualAccounts, getTransactions } from './services/tatumApi';
 
-const VirtualAccounts = () => {
+const App = () => {
   const [apiKey, setApiKey] = useState('');
   const [accounts, setAccounts] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState(null);
 
-  const getVirtualAccounts = () => {
-    fetch('https://api.tatum.io/v3/ledger/account?pageSize=50&active=true', {
-      headers: {
-        'x-api-key': apiKey,
-      },
-    })
-      .then(response => response.json())
-      .then(data => {
-        const promises = data.map(account => getDepositAddresses(account.id));
-        Promise.all(promises)
-          .then(depositAddressesArray => {
-            const updatedAccounts = data.map((account, index) => ({
-              ...account,
-              depositAddresses: depositAddressesArray[index].map(
-                addressObj => addressObj.address
-              ),
-            }));
-            setAccounts(updatedAccounts);
-          })
-          .catch(error => console.error('Error fetching deposit addresses:', error));
-      })
-      .catch(error => console.error('Error fetching accounts:', error));
-  };
+  // Modal State
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedTransactions, setSelectedTransactions] = useState([]);
+  const [modalLoading, setModalLoading] = useState(false);
 
-  const getDepositAddresses = accountId => {
-    return fetch(
-      `https://api.tatum.io/v3/offchain/account/${accountId}/address`,
-      {
-        headers: {
-          'x-api-key': apiKey,
-        },
-      }
-    ).then(response => response.json());
-  };
+  const handleFetchAccounts = async () => {
+    if (!apiKey) {
+      alert('Please enter an API Key');
+      return;
+    }
 
-  const getTransactions = async (accountId, apiKey) => {
+    setIsLoading(true);
+    setError(null);
     try {
-      const response = await fetch('https://api.tatum.io/v3/ledger/transaction/account?pageSize=50', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-        },
-        body: JSON.stringify({
-          id: accountId,
-          pageSize: 50,
-        }),
-      });
+      const data = await getVirtualAccounts(apiKey);
+      setAccounts(data);
+    } catch (err) {
+      setError('Failed to load accounts. Please check your API key.');
+      console.error(err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
-      if (!response.ok) {
-        throw new Error('Network response was not ok');
-      }
+  const handleViewTransactions = async (accountId) => {
+    setIsModalOpen(true);
+    setModalLoading(true);
+    setSelectedTransactions([]);
 
-      const data = await response.json();
-      
-      // Create a popup window to display transactions
-      const popup = window.open('', '_blank', 'width=600,height=600');
-      popup.document.write('<style>table{width:100%;border-collapse:collapse;margin-top:20px;}th,td{border:1px solid #ddd;padding:8px;text-align:left;}th{background-color:#4CAF50;color:white;}tbody tr:nth-child(even){background-color:#f2f2f2;}tbody tr:hover{background-color:#ddd;}</style><table><thead><tr><th>Amount</th><th>Operation Type</th><th>Currency</th><th>Transaction Type</th><th>Account ID</th><th>Reference</th><th>TX ID</th><th>Address</th><th>Created</th></tr></thead><tbody>');
-      
-      data.forEach(tx => {
-        const date = new Date(tx.created);
-        popup.document.write(`<tr><td>${tx.amount}</td><td>${tx.operationType}</td><td>${tx.currency}</td><td>${tx.transactionType}</td><td>${tx.accountId}</td><td>${tx.reference}</td><td>${tx.txId}</td><td>${tx.address}</td><td>${date.toISOString()}</td></tr>`);
-      });
-
-      popup.document.write('</tbody></table>');
-    } catch (error) {
-      console.error('Error fetching transactions:', error);
+    try {
+      const data = await getTransactions(accountId, apiKey);
+      setSelectedTransactions(data);
+    } catch (err) {
+      console.error('Failed to load transactions', err);
+      // Optional: show error in modal
+    } finally {
+      setModalLoading(false);
     }
   };
 
   return (
-    <div>
-      <h1>MY TATUM VIRTUAL ACCOUNTS</h1>
-      <input
-        type="text"
-        value={apiKey}
-        onChange={(e) => setApiKey(e.target.value)}
-        placeholder="Enter your API Key here"
+    <div className="app-container">
+      <header className="app-header">
+        <h1>Tatum Virtual Accounts Dashboard</h1>
+      </header>
+
+      <div className="controls-section">
+        <input
+          type="text"
+          className="api-key-input"
+          value={apiKey}
+          onChange={(e) => setApiKey(e.target.value)}
+          placeholder="Enter your Tatum API Key"
+        />
+        <button
+          className="primary-btn"
+          onClick={handleFetchAccounts}
+          disabled={isLoading}
+        >
+          {isLoading ? 'Loading...' : 'Get Accounts'}
+        </button>
+      </div>
+
+      {error && <div className="error-message">{error}</div>}
+
+      <div className="content-section">
+        <AccountList
+          accounts={accounts}
+          onViewTransactions={handleViewTransactions}
+        />
+      </div>
+
+      <TransactionModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        transactions={selectedTransactions}
+        isLoading={modalLoading}
       />
-      <button onClick={getVirtualAccounts}>Get Virtual Accounts</button>
-      <table>
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>Balance</th>
-            <th>Currency</th>
-            <th>Active</th>
-            <th>Deposit Addresses</th>
-            <th>TXs</th>
-          </tr>
-        </thead>
-        <tbody>
-          {accounts.map((account) => (
-            <tr key={account.id}>
-              <td>{account.id}</td>
-              <td>{account.balance.accountBalance}</td>
-              <td>{account.currency}</td>
-              <td>{account.active}</td>
-              <td>{account.depositAddresses.join(', ')}</td>
-              <td>
-                <button
-                  onClick={() => getTransactions(account.id, apiKey)}
-                >
-                  Get TXs
-                </button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-
-      {/* Add the same CSS for the second table */}
-      <style>
-        {`
-          table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 20px;
-          }
-
-          th, td {
-            border: 1px solid #ddd;
-            padding: 8px;
-            text-align: left;
-          }
-
-          th {
-            background-color: #4CAF50;
-            color: white;
-          }
-
-          tbody tr:nth-child(even) {
-            background-color: #f2f2f2;
-          }
-
-          tbody tr:hover {
-            background-color: #ddd;
-          }
-        `}
-      </style>
     </div>
   );
 };
 
-export default VirtualAccounts;
+export default App;
